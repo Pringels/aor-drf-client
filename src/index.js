@@ -10,6 +10,13 @@ import {
     DELETE
 } from './types';
 
+/**
+ * @param {String} apiUrl The base API url
+ * @param {String} type One of the constants appearing at the top if this file, e.g. 'UPDATE'
+ * @param {String} resource Name of the resource to fetch, e.g. 'posts'
+ * @param {Object} params The REST request params, depending on the type
+ * @returns {Object} { url, options } The HTTP request parameters
+ */
 export const convertRESTRequestToHTTP = ({
     apiUrl,
     type,
@@ -18,14 +25,16 @@ export const convertRESTRequestToHTTP = ({
 }) => {
     let url = '';
     const options = {};
+    const query = {};
     switch (type) {
+        case GET_MANY_REFERENCE: {
+            query[params.target] = params.id;
+        }
         case GET_LIST: {
-            const query = {};
-
             if (params.pagination) {
                 const { page, perPage } = params.pagination;
                 query['limit'] = perPage;
-                query['offset'] = page * perPage;
+                query['offset'] = (page - 1) * perPage;
             }
 
             if (params.sort) {
@@ -34,51 +43,33 @@ export const convertRESTRequestToHTTP = ({
             }
 
             if (params.filter) {
-                query['search'] = params.filter;
+                Object.keys(params.filter).forEach(key => {
+                    query[key] = params.filter[key];
+                });
             }
 
             url = `${apiUrl}/${resource}/?${stringify(query)}`;
             break;
         }
         case GET_ONE:
-            url = `${apiUrl}/${resource}/${params.id}`;
+            url = `${apiUrl}/${resource}/${params.id}/`;
             break;
         case GET_MANY: {
-            const query = {
-                filter: JSON.stringify({ id: params.ids })
-            };
-            url = `${apiUrl}/${resource}?${stringify(query)}`;
-            break;
-        }
-        case GET_MANY_REFERENCE: {
-            const { page, perPage } = params.pagination;
-            const { field, order } = params.sort;
-            const query = {
-                sort: JSON.stringify([field, order]),
-                range: JSON.stringify([
-                    (page - 1) * perPage,
-                    page * perPage - 1
-                ]),
-                filter: JSON.stringify({
-                    ...params.filter,
-                    [params.target]: params.id
-                })
-            };
-            url = `${apiUrl}/${resource}?${stringify(query)}`;
+            url = params.ids.map(id => `${apiUrl}/${resource}/${id}/`);
             break;
         }
         case UPDATE:
-            url = `${apiUrl}/${resource}/${params.id}`;
+            url = `${apiUrl}/${resource}/${params.id}/`;
             options.method = 'PUT';
             options.body = JSON.stringify(params.data);
             break;
         case CREATE:
-            url = `${apiUrl}/${resource}`;
+            url = `${apiUrl}/${resource}/`;
             options.method = 'POST';
             options.body = JSON.stringify(params.data);
             break;
         case DELETE:
-            url = `${apiUrl}/${resource}/${params.id}`;
+            url = `${apiUrl}/${resource}/${params.id}/`;
             options.method = 'DELETE';
             break;
         default:
@@ -122,39 +113,63 @@ const convertHTTPResponseToREST = ({ response, type, resource, params }) => {
 };
 
 /**
- * Maps admin-on-rest queries to a simple REST API
+ * Maps admin-on-rest queries to Django Rest Framework
  *
- * The REST dialect is similar to the one of FakeRest
- * @see https://github.com/marmelab/FakeRest
+ * The REST dialect is standard DRF with additional filtering back-ends:
+ * @see http://www.django-rest-framework.org/api-guide/filtering/
  * @example
- * GET_LIST     => GET http://my.api.url/posts?sort=['title','ASC']&range=[0, 24]
- * GET_ONE      => GET http://my.api.url/posts/123
- * GET_MANY     => GET http://my.api.url/posts?filter={ids:[123,456,789]}
- * UPDATE       => PUT http://my.api.url/posts/123
- * CREATE       => POST http://my.api.url/posts/123
- * DELETE       => DELETE http://my.api.url/posts/123
+ * GET_LIST     => GET http://my.api.url/users?limit=10&offset=30&ordering=name
+ * GET_ONE      => GET http://my.api.url/users/123
+ * GET_MANY     => GET http://my.api.url/users/1/ GET http://my.api.url/users/2/
+ * UPDATE       => PUT http://my.api.url/users/123
+ * CREATE       => POST http://my.api.url/users/123
+ * DELETE       => DELETE http://my.api.url/users/123
  */
 export default (apiUrl, httpClient = fetchJson) => {
     /**
-     * @param {String} type One of the constants appearing at the top if this file, e.g. 'UPDATE'
-     * @param {String} resource Name of the resource to fetch, e.g. 'posts'
-     * @param {Object} params The REST request params, depending on the type
-     * @returns {Object} { url, options } The HTTP request parameters
-     */
-
-    /**
      * @param {string} type Request type, e.g GET_LIST
-     * @param {string} resource Resource name, e.g. "posts"
+     * @param {string} resource Resource name, e.g. "users"
      * @param {Object} payload Request parameters. Depends on the request type
      * @returns {Promise} the Promise for a REST response
      */
     return (type, resource, params) => {
-        const { url, options } = convertRESTRequestToHTTP(
+        const { url, options } = convertRESTRequestToHTTP({
             apiUrl,
             type,
             resource,
             params
-        );
+        });
+
+        // If there are multiple urls then process them in parallel
+        if (Array.isArray(url)) {
+            let RESTResponse = httpClient(url[0], options).then(response =>
+                convertHTTPResponseToREST(response, type, resource, params)
+            );
+            return Promise.all(
+                url
+                    .filter((_, i) => i > 0)
+                    .map(singleUrl =>
+                        httpClient(url, options).then(response =>
+                            convertHTTPResponseToREST(
+                                response,
+                                type,
+                                resource,
+                                params
+                            )
+                        )
+                    )
+            ).then(
+                responses =>
+                    (RESTResponse.data = Object.assign(
+                        {},
+                        RESTResponse.data,
+                        responses
+                            .map(res => res.data)
+                            .reduce((a, b) => Object.assign({}, a, b))
+                    ))
+            );
+        }
+
         return httpClient(url, options).then(response =>
             convertHTTPResponseToREST(response, type, resource, params)
         );
