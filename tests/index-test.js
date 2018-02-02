@@ -1,7 +1,6 @@
 import expect from 'expect';
 
 import aorClient, { convertRESTRequestToHTTP } from 'src/index';
-import { mockHttpClient } from './mockHttpClient';
 
 let apiUrl = 'http://test.com/api/v1';
 
@@ -271,25 +270,6 @@ describe('DELETE', () => {
                 method: 'DELETE'
             },
             url: `${apiUrl}/users/123/`
-        });
-    });
-});
-
-describe('Http handlers', () => {
-    it('checks response type of request', done => {
-        const request = aorClient(apiUrl, mockHttpClient)('DELETE', 'users', {
-            id: 100
-        });
-        request.then(response => {
-            expect(response).toEqual({
-                headers: {
-                    method: 'DELETE'
-                },
-                json: {
-                    baz: 'boo'
-                }
-            });
-            done();
         });
     });
 });

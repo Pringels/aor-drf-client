@@ -87,6 +87,7 @@ export const convertRESTRequestToHTTP = ({
  */
 const convertHTTPResponseToREST = ({ response, type, resource, params }) => {
     const { headers, json } = response;
+
     switch (type) {
         case GET_LIST:
         case GET_MANY_REFERENCE:
@@ -132,6 +133,7 @@ export default (apiUrl, httpClient = fetchJson) => {
      * @param {Object} payload Request parameters. Depends on the request type
      * @returns {Promise} the Promise for a REST response
      */
+
     return (type, resource, params) => {
         const { url, options } = convertRESTRequestToHTTP({
             apiUrl,
@@ -146,18 +148,16 @@ export default (apiUrl, httpClient = fetchJson) => {
                 convertHTTPResponseToREST(response, type, resource, params)
             );
             return Promise.all(
-                url
-                    .filter((_, i) => i > 0)
-                    .map(singleUrl =>
-                        httpClient(url, options).then(response =>
-                            convertHTTPResponseToREST(
-                                response,
-                                type,
-                                resource,
-                                params
-                            )
-                        )
+                url.filter((_, i) => i > 0).map(singleUrl =>
+                    httpClient(url, options).then(response =>
+                        convertHTTPResponseToREST({
+                            response,
+                            type,
+                            resource,
+                            params
+                        })
                     )
+                )
             ).then(
                 responses =>
                     (RESTResponse.data = Object.assign(
@@ -171,7 +171,7 @@ export default (apiUrl, httpClient = fetchJson) => {
         }
 
         return httpClient(url, options).then(response =>
-            convertHTTPResponseToREST(response, type, resource, params)
+            convertHTTPResponseToREST({ response, type, resource, params })
         );
     };
 };
