@@ -26,6 +26,7 @@ export const convertRESTRequestToHTTP = ({
     let url = '';
     const options = {};
     const query = {};
+
     switch (type) {
         case GET_MANY_REFERENCE: {
             query[params.target] = params.id;
@@ -55,7 +56,12 @@ export const convertRESTRequestToHTTP = ({
             url = `${apiUrl}/${resource}/${params.id}/`;
             break;
         case GET_MANY: {
-            url = params.ids.map(id => `${apiUrl}/${resource}/${id}/`);
+            url = params.ids.map(id => {
+                if (id.includes('http')) {
+                    id = extractPrimaryKey(id);
+                }
+                return `${apiUrl}/${resource}/${id}/`;
+            });
             break;
         }
         case UPDATE:
@@ -87,31 +93,29 @@ export const convertRESTRequestToHTTP = ({
  */
 const convertHTTPResponseToREST = ({ response, type, resource, params }) => {
     const { headers, json } = response;
-    console.log('data', json);
 
     switch (type) {
         case GET_LIST:
-        case GET_MANY_REFERENCE:
-            if (!headers.has('X-Total-Count')) {
-                throw new Error(
-                    'The X-Total-Count header is missing in the HTTP Response. The DRF client expects responses for lists of resources to contain this header with the total number of results to build the pagination. If you are using CORS, did you declare Content-Range in the Access-Control-Expose-Headers header?'
-                );
-            }
             return {
-                data: json.results ? json.results : json,
-                total: parseInt(
-                    headers
-                        .get('X-Total-Count')
-                        .split('/')
-                        .pop(),
-                    10
-                )
+                data: json.results
+                    ? json.results.map(res => ({ ...res, id: res.url }))
+                    : json.map(res => ({ ...res, id: res.url })),
+                total: json.count
             };
         case CREATE:
             return { data: { ...params.data, id: json.id } };
         default:
-            return { data: json };
+            return { data: { ...json, id: json.url } };
     }
+};
+
+/**
+ * Returns the last param of a given url
+ * @param {string} url
+ */
+const extractPrimaryKey = url => {
+    let substrs = url.slice('/');
+    return substrs[substrs.length - 2];
 };
 
 /**
@@ -135,7 +139,7 @@ export default (apiUrl, httpClient = fetchJson) => {
      * @returns {Promise} the Promise for a REST response
      */
 
-    return (type, resource, params) => {
+    return async (type, resource, params) => {
         const { url, options } = convertRESTRequestToHTTP({
             apiUrl,
             type,
@@ -145,16 +149,8 @@ export default (apiUrl, httpClient = fetchJson) => {
 
         // If there are multiple urls then process them in parallel
         if (Array.isArray(url)) {
-            let RESTResponse = httpClient(url[0], options).then(response =>
-                convertHTTPResponseToREST({
-                    response,
-                    type,
-                    resource,
-                    params
-                })
-            );
-            return Promise.all(
-                url.filter((_, i) => i > 0).map(singleUrl =>
+            const responses = await Promise.all(
+                url.map(singleUrl =>
                     httpClient(singleUrl, options).then(response =>
                         convertHTTPResponseToREST({
                             response,
@@ -164,15 +160,10 @@ export default (apiUrl, httpClient = fetchJson) => {
                         })
                     )
                 )
-            ).then(responses =>
-                Object.assign(
-                    {},
-                    RESTResponse.data,
-                    responses
-                        .map(res => res.data)
-                        .reduce((a, b) => a.concat(b), [])
-                )
             );
+            return {
+                data: responses.map(res => res.data)
+            };
         }
 
         return httpClient(url, options).then(response =>
