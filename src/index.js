@@ -114,7 +114,7 @@ const convertHTTPResponseToREST = ({ response, type, resource, params }) => {
  * @param {string} url
  */
 const extractPrimaryKey = url => {
-    let substrs = url.slice('/');
+    let substrs = url.split('/');
     return substrs[substrs.length - 2];
 };
 
